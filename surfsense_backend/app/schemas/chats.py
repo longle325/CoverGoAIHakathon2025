@@ -13,6 +13,13 @@ class ChatBase(BaseModel):
     initial_connectors: list[str] | None = None
     messages: list[Any]
     search_space_id: int
+    # Cross-workspace support
+    document_workspace_map: dict[int, int] | None = None
+    connector_workspace_map: dict[str, int] | None = None
+    selected_workspace_ids: list[int] | None = None
+    # Optional fields for chat creation (not stored in DB)
+    document_ids: list[int] | None = None
+    youtube_urls: list[str] | None = None
 
 
 class ChatBaseWithoutMessages(BaseModel):

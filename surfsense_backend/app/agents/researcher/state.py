@@ -34,6 +34,9 @@ class State:
 
     # Temporary field to hold reranked documents from sub-agents for further question generation
     reranked_documents: list[Any] | None = field(default=None)
+    
+    # Cross-workspace support
+    selected_workspace_ids: list[int] | None = field(default=None)
 
     # OUTPUT: Populated by agent nodes
     # Using field to explicitly mark as part of state

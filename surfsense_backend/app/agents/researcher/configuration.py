@@ -38,6 +38,8 @@ class Configuration:
     research_mode: ResearchMode
     document_ids_to_add_in_context: list[int]
     language: str | None = None
+    # Cross-workspace support
+    selected_workspace_ids: list[int] | None = None
 
     @classmethod
     def from_runnable_config(

@@ -21,6 +21,7 @@ async def stream_connector_search_results(
     search_mode_str: str,
     document_ids_to_add_in_context: list[int],
     language: str | None = None,
+    selected_workspace_ids: list[int] | None = None,
 ) -> AsyncGenerator[str, None]:
     """
     Stream connector search results to the client
@@ -32,11 +33,19 @@ async def stream_connector_search_results(
         session: The database session
         research_mode: The research mode
         selected_connectors: List of selected connectors
+        selected_workspace_ids: List of workspace IDs for cross-workspace search
 
     Yields:
         str: Formatted response strings
     """
     streaming_service = StreamingService()
+    
+    # Log workspace information
+    if selected_workspace_ids and len(selected_workspace_ids) > 0:
+        print(f"🌐 Cross-workspace search enabled!")
+        print(f"   Workspaces: {selected_workspace_ids}")
+    else:
+        print(f"📍 Single workspace search: {search_space_id}")
 
     if research_mode == "REPORT_GENERAL":
         num_sections = 1
@@ -68,6 +77,7 @@ async def stream_connector_search_results(
             "research_mode": research_mode,
             "document_ids_to_add_in_context": document_ids_to_add_in_context,
             "language": language,  # Add language to the configuration
+            "selected_workspace_ids": selected_workspace_ids,  # Add workspace IDs
         }
     }
     # print(f"Researcher configuration: {config['configurable']}")  # Debug print
@@ -76,10 +86,12 @@ async def stream_connector_search_results(
         db_session=session,
         streaming_service=streaming_service,
         chat_history=langchain_chat_history,
+        selected_workspace_ids=selected_workspace_ids,  # Add to state
     )
 
     # Run the graph directly
     print("\nRunning the complete researcher workflow...")
+    print('ccbm 600 - researcher config connector:', config["configurable"]["connectors_to_search"])  # Debug print
 
     # Use streaming with config parameter
     async for chunk in researcher_graph.astream(

@@ -47,13 +47,22 @@ async def handle_chat_data(
 
     # Extract and validate data from request
     request_data = request.data or {}
+    
+
     search_space_id = validate_search_space_id(request_data.get("search_space_id"))
     research_mode = validate_research_mode(request_data.get("research_mode"))
     selected_connectors = validate_connectors(request_data.get("selected_connectors"))
+    print('ccbm557 - Selected Connectors after validation:', selected_connectors)
     document_ids_to_add_in_context = validate_document_ids(
         request_data.get("document_ids_to_add_in_context")
     )
     search_mode_str = validate_search_mode(request_data.get("search_mode"))
+    
+    # Extract workspace data
+    selected_workspace_ids = request_data.get("selected_workspace_ids", [])
+    if selected_workspace_ids:
+        print(f"🌐 Cross-workspace request detected!")
+        print(f"   Selected workspaces: {selected_workspace_ids}")
     # print("RESQUEST DATA:", request_data)
     # print("SELECTED CONNECTORS:", selected_connectors)
 
@@ -123,6 +132,7 @@ async def handle_chat_data(
             search_mode_str,
             document_ids_to_add_in_context,
             language,
+            selected_workspace_ids,  # Pass workspace IDs
         )
     )
 
@@ -138,7 +148,9 @@ async def create_chat(
 ):
     try:
         await check_ownership(session, SearchSpace, chat.search_space_id, user)
-        db_chat = Chat(**chat.model_dump())
+        # Exclude fields that are not in the database model (document_ids, youtube_urls)
+        chat_data = chat.model_dump(exclude={'document_ids', 'youtube_urls'})
+        db_chat = Chat(**chat_data)
         session.add(db_chat)
         await session.commit()
         await session.refresh(db_chat)

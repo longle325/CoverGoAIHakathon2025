@@ -250,6 +250,8 @@ async def fetch_documents_by_ids(
                         (doc.content),
                     )
                     url = metadata.get("url", "")
+                    
+                    print('ccbm623 - GitHub source url:', url)
 
                 elif doc_type == "YOUTUBE_VIDEO":
                     # Extract YouTube-specific metadata
@@ -681,6 +683,7 @@ async def fetch_relevant_documents(
     connector_service: ConnectorService = None,
     search_mode: SearchMode = SearchMode.CHUNKS,
     user_selected_sources: list[dict[str, Any]] | None = None,
+    selected_workspace_ids: list[int] | None = None,  # NEW: Support multiple workspaces
 ) -> list[dict[str, Any]]:
     """
     Fetch relevant documents for research questions using the provided connectors.
@@ -693,13 +696,14 @@ async def fetch_relevant_documents(
     Args:
         research_questions: List of research questions to find documents for
         user_id: The user ID
-        search_space_id: The search space ID
+        search_space_id: The search space ID (primary workspace)
         db_session: The database session
         connectors_to_search: List of connectors to search
         writer: StreamWriter for sending progress updates
         state: The current state containing the streaming service
         top_k: Number of top results to retrieve per connector per question
         connector_service: An initialized connector service to use for searching
+        selected_workspace_ids: List of workspace IDs for cross-workspace search
 
     Returns:
         List of relevant documents
@@ -710,6 +714,21 @@ async def fetch_relevant_documents(
     # Only use streaming if both writer and state are provided
     streaming_service = state.streaming_service if state is not None else None
 
+    # Determine workspaces to search
+    workspaces_to_search = selected_workspace_ids if selected_workspace_ids and len(selected_workspace_ids) > 0 else [search_space_id]
+    
+    if len(workspaces_to_search) > 1:
+        print(f"🌐 Cross-workspace search enabled for {len(workspaces_to_search)} workspaces: {workspaces_to_search}")
+        if streaming_service and writer:
+            writer(
+                {
+                    "yield_value": streaming_service.format_terminal_info_delta(
+                        f"🌐 Searching across {len(workspaces_to_search)} workspaces"
+                    )
+                }
+            )
+
+    print('ccbm 619 - connectors_to_search = ', connectors_to_search)
     # Handle case when no connectors are selected
     if not connectors_to_search or len(connectors_to_search) == 0:
         if streaming_service and writer:
@@ -756,580 +775,587 @@ async def fetch_relevant_documents(
 
         # Process each selected connector
         for connector in connectors_to_search:
-            # Stream connector being searched
-            if streaming_service and writer:
-                connector_emoji = get_connector_emoji(connector)
-                friendly_name = get_connector_friendly_name(connector)
-                writer(
-                    {
-                        "yield_value": streaming_service.format_terminal_info_delta(
-                            f"{connector_emoji} Searching {friendly_name} for relevant information..."
-                        )
-                    }
-                )
-
-            try:
-                if connector == "YOUTUBE_VIDEO":
-                    (
-                        source_object,
-                        youtube_chunks,
-                    ) = await connector_service.search_youtube(
-                        user_query=reformulated_query,
-                        user_id=user_id,
-                        search_space_id=search_space_id,
-                        top_k=top_k,
-                        search_mode=search_mode,
-                    )
-
-                    # Add to sources and raw documents
-                    if source_object:
-                        all_sources.append(source_object)
-                    all_raw_documents.extend(youtube_chunks)
-
-                    # Stream found document count
-                    if streaming_service and writer:
-                        writer(
-                            {
-                                "yield_value": streaming_service.format_terminal_info_delta(
-                                    f"📹 Found {len(youtube_chunks)} YouTube chunks related to your query"
-                                )
-                            }
-                        )
-
-                elif connector == "EXTENSION":
-                    (
-                        source_object,
-                        extension_chunks,
-                    ) = await connector_service.search_extension(
-                        user_query=reformulated_query,
-                        user_id=user_id,
-                        search_space_id=search_space_id,
-                        top_k=top_k,
-                        search_mode=search_mode,
-                    )
-
-                    # Add to sources and raw documents
-                    if source_object:
-                        all_sources.append(source_object)
-                    all_raw_documents.extend(extension_chunks)
-
-                    # Stream found document count
-                    if streaming_service and writer:
-                        writer(
-                            {
-                                "yield_value": streaming_service.format_terminal_info_delta(
-                                    f"🧩 Found {len(extension_chunks)} Browser Extension chunks related to your query"
-                                )
-                            }
-                        )
-
-                elif connector == "CRAWLED_URL":
-                    (
-                        source_object,
-                        crawled_urls_chunks,
-                    ) = await connector_service.search_crawled_urls(
-                        user_query=reformulated_query,
-                        user_id=user_id,
-                        search_space_id=search_space_id,
-                        top_k=top_k,
-                        search_mode=search_mode,
-                    )
-
-                    # Add to sources and raw documents
-                    if source_object:
-                        all_sources.append(source_object)
-                    all_raw_documents.extend(crawled_urls_chunks)
-
-                    # Stream found document count
-                    if streaming_service and writer:
-                        writer(
-                            {
-                                "yield_value": streaming_service.format_terminal_info_delta(
-                                    f"🌐 Found {len(crawled_urls_chunks)} Web Pages chunks related to your query"
-                                )
-                            }
-                        )
-
-                elif connector == "FILE":
-                    source_object, files_chunks = await connector_service.search_files(
-                        user_query=reformulated_query,
-                        user_id=user_id,
-                        search_space_id=search_space_id,
-                        top_k=top_k,
-                        search_mode=search_mode,
-                    )
-
-                    # Add to sources and raw documents
-                    if source_object:
-                        all_sources.append(source_object)
-                    all_raw_documents.extend(files_chunks)
-
-                    # Stream found document count
-                    if streaming_service and writer:
-                        writer(
-                            {
-                                "yield_value": streaming_service.format_terminal_info_delta(
-                                    f"📄 Found {len(files_chunks)} Files chunks related to your query"
-                                )
-                            }
-                        )
-
-                elif connector == "SLACK_CONNECTOR":
-                    source_object, slack_chunks = await connector_service.search_slack(
-                        user_query=reformulated_query,
-                        user_id=user_id,
-                        search_space_id=search_space_id,
-                        top_k=top_k,
-                        search_mode=search_mode,
-                    )
-
-                    # Add to sources and raw documents
-                    if source_object:
-                        all_sources.append(source_object)
-                    all_raw_documents.extend(slack_chunks)
-
-                    # Stream found document count
-                    if streaming_service and writer:
-                        writer(
-                            {
-                                "yield_value": streaming_service.format_terminal_info_delta(
-                                    f"💬 Found {len(slack_chunks)} Slack messages related to your query"
-                                )
-                            }
-                        )
-
-                elif connector == "NOTION_CONNECTOR":
-                    (
-                        source_object,
-                        notion_chunks,
-                    ) = await connector_service.search_notion(
-                        user_query=reformulated_query,
-                        user_id=user_id,
-                        search_space_id=search_space_id,
-                        top_k=top_k,
-                        search_mode=search_mode,
-                    )
-
-                    # Add to sources and raw documents
-                    if source_object:
-                        all_sources.append(source_object)
-                    all_raw_documents.extend(notion_chunks)
-
-                    # Stream found document count
-                    if streaming_service and writer:
-                        writer(
-                            {
-                                "yield_value": streaming_service.format_terminal_info_delta(
-                                    f"📘 Found {len(notion_chunks)} Notion pages/blocks related to your query"
-                                )
-                            }
-                        )
-
-                elif connector == "GITHUB_CONNECTOR":
-                    (
-                        source_object,
-                        github_chunks,
-                    ) = await connector_service.search_github(
-                        user_query=reformulated_query,
-                        user_id=user_id,
-                        search_space_id=search_space_id,
-                        top_k=top_k,
-                        search_mode=search_mode,
-                    )
-
-                    # Add to sources and raw documents
-                    if source_object:
-                        all_sources.append(source_object)
-                    all_raw_documents.extend(github_chunks)
-
-                    # Stream found document count
-                    if streaming_service and writer:
-                        writer(
-                            {
-                                "yield_value": streaming_service.format_terminal_info_delta(
-                                    f"🐙 Found {len(github_chunks)} GitHub files/issues related to your query"
-                                )
-                            }
-                        )
-
-                elif connector == "LINEAR_CONNECTOR":
-                    (
-                        source_object,
-                        linear_chunks,
-                    ) = await connector_service.search_linear(
-                        user_query=reformulated_query,
-                        user_id=user_id,
-                        search_space_id=search_space_id,
-                        top_k=top_k,
-                        search_mode=search_mode,
-                    )
-
-                    # Add to sources and raw documents
-                    if source_object:
-                        all_sources.append(source_object)
-                    all_raw_documents.extend(linear_chunks)
-
-                    # Stream found document count
-                    if streaming_service and writer:
-                        writer(
-                            {
-                                "yield_value": streaming_service.format_terminal_info_delta(
-                                    f"📊 Found {len(linear_chunks)} Linear issues related to your query"
-                                )
-                            }
-                        )
-
-                elif connector == "TAVILY_API":
-                    (
-                        source_object,
-                        tavily_chunks,
-                    ) = await connector_service.search_tavily(
-                        user_query=reformulated_query,
-                        user_id=user_id,
-                        search_space_id=search_space_id,
-                        top_k=top_k,
-                    )
-
-                    # Add to sources and raw documents
-                    if source_object:
-                        all_sources.append(source_object)
-                    all_raw_documents.extend(tavily_chunks)
-
-                    # Stream found document count
-                    if streaming_service and writer:
-                        writer(
-                            {
-                                "yield_value": streaming_service.format_terminal_info_delta(
-                                    f"🔍 Found {len(tavily_chunks)} Web Search results related to your query"
-                                )
-                            }
-                        )
-
-                elif connector == "SEARXNG_API":
-                    (
-                        source_object,
-                        searx_chunks,
-                    ) = await connector_service.search_searxng(
-                        user_query=reformulated_query,
-                        user_id=user_id,
-                        search_space_id=search_space_id,
-                        top_k=top_k,
-                    )
-
-                    if source_object:
-                        all_sources.append(source_object)
-                    all_raw_documents.extend(searx_chunks)
-
-                    if streaming_service and writer:
-                        writer(
-                            {
-                                "yield_value": streaming_service.format_terminal_info_delta(
-                                    f"🌐 Found {len(searx_chunks)} SearxNG results related to your query"
-                                )
-                            }
-                        )
-
-                elif connector == "LINKUP_API":
-                    linkup_mode = "standard"
-
-                    (
-                        source_object,
-                        linkup_chunks,
-                    ) = await connector_service.search_linkup(
-                        user_query=reformulated_query,
-                        user_id=user_id,
-                        search_space_id=search_space_id,
-                        mode=linkup_mode,
-                    )
-
-                    # Add to sources and raw documents
-                    if source_object:
-                        all_sources.append(source_object)
-                    all_raw_documents.extend(linkup_chunks)
-
-                    # Stream found document count
-                    if streaming_service and writer:
-                        writer(
-                            {
-                                "yield_value": streaming_service.format_terminal_info_delta(
-                                    f"🔗 Found {len(linkup_chunks)} Linkup results related to your query"
-                                )
-                            }
-                        )
-
-                elif connector == "BAIDU_SEARCH_API":
-                    (
-                        source_object,
-                        baidu_chunks,
-                    ) = await connector_service.search_baidu(
-                        user_query=reformulated_query,
-                        user_id=user_id,
-                        search_space_id=search_space_id,
-                        top_k=top_k,
-                    )
-
-                    # Add to sources and raw documents
-                    if source_object:
-                        all_sources.append(source_object)
-                    all_raw_documents.extend(baidu_chunks)
-
-                    # Stream found document count
-                    if streaming_service and writer:
-                        writer(
-                            {
-                                "yield_value": streaming_service.format_terminal_info_delta(
-                                    f"🇨🇳 Found {len(baidu_chunks)} Baidu Search results related to your query"
-                                )
-                            }
-                        )
-
-                elif connector == "DISCORD_CONNECTOR":
-                    (
-                        source_object,
-                        discord_chunks,
-                    ) = await connector_service.search_discord(
-                        user_query=reformulated_query,
-                        user_id=user_id,
-                        search_space_id=search_space_id,
-                        top_k=top_k,
-                        search_mode=search_mode,
-                    )
-                    # Add to sources and raw documents
-                    if source_object:
-                        all_sources.append(source_object)
-                    all_raw_documents.extend(discord_chunks)
-                    # Stream found document count
-                    if streaming_service and writer:
-                        writer(
-                            {
-                                "yield_value": streaming_service.format_terminal_info_delta(
-                                    f"🗨️ Found {len(discord_chunks)} Discord messages related to your query"
-                                )
-                            }
-                        )
-
-                elif connector == "JIRA_CONNECTOR":
-                    source_object, jira_chunks = await connector_service.search_jira(
-                        user_query=reformulated_query,
-                        user_id=user_id,
-                        search_space_id=search_space_id,
-                        top_k=top_k,
-                        search_mode=search_mode,
-                    )
-
-                    # Add to sources and raw documents
-                    if source_object:
-                        all_sources.append(source_object)
-                    all_raw_documents.extend(jira_chunks)
-
-                    # Stream found document count
-                    if streaming_service and writer:
-                        writer(
-                            {
-                                "yield_value": streaming_service.format_terminal_info_delta(
-                                    f"🎫 Found {len(jira_chunks)} Jira issues related to your query"
-                                )
-                            }
-                        )
-                elif connector == "GOOGLE_CALENDAR_CONNECTOR":
-                    (
-                        source_object,
-                        calendar_chunks,
-                    ) = await connector_service.search_google_calendar(
-                        user_query=reformulated_query,
-                        user_id=user_id,
-                        search_space_id=search_space_id,
-                        top_k=top_k,
-                        search_mode=search_mode,
-                    )
-
-                    # Add to sources and raw documents
-                    if source_object:
-                        all_sources.append(source_object)
-                    all_raw_documents.extend(calendar_chunks)
-
-                    # Stream found document count
-                    if streaming_service and writer:
-                        writer(
-                            {
-                                "yield_value": streaming_service.format_terminal_info_delta(
-                                    f"📅 Found {len(calendar_chunks)} calendar events related to your query"
-                                )
-                            }
-                        )
-                elif connector == "AIRTABLE_CONNECTOR":
-                    (
-                        source_object,
-                        airtable_chunks,
-                    ) = await connector_service.search_airtable(
-                        user_query=reformulated_query,
-                        user_id=user_id,
-                        search_space_id=search_space_id,
-                        top_k=top_k,
-                        search_mode=search_mode,
-                    )
-
-                    # Add to sources and raw documents
-                    if source_object:
-                        all_sources.append(source_object)
-                    all_raw_documents.extend(airtable_chunks)
-
-                    # Stream found document count
-                    if streaming_service and writer:
-                        writer(
-                            {
-                                "yield_value": streaming_service.format_terminal_info_delta(
-                                    f"🗃️ Found {len(airtable_chunks)} Airtable records related to your query"
-                                )
-                            }
-                        )
-                elif connector == "GOOGLE_GMAIL_CONNECTOR":
-                    (
-                        source_object,
-                        gmail_chunks,
-                    ) = await connector_service.search_google_gmail(
-                        user_query=reformulated_query,
-                        user_id=user_id,
-                        search_space_id=search_space_id,
-                        top_k=top_k,
-                        search_mode=search_mode,
-                    )
-
-                    # Add to sources and raw documents
-                    if source_object:
-                        all_sources.append(source_object)
-                    all_raw_documents.extend(gmail_chunks)
-
-                    # Stream found document count
-                    if streaming_service and writer:
-                        writer(
-                            {
-                                "yield_value": streaming_service.format_terminal_info_delta(
-                                    f"📧 Found {len(gmail_chunks)} Gmail messages related to your query"
-                                )
-                            }
-                        )
-                elif connector == "CONFLUENCE_CONNECTOR":
-                    (
-                        source_object,
-                        confluence_chunks,
-                    ) = await connector_service.search_confluence(
-                        user_query=reformulated_query,
-                        user_id=user_id,
-                        search_space_id=search_space_id,
-                        top_k=top_k,
-                        search_mode=search_mode,
-                    )
-
-                    # Add to sources and raw documents
-                    if source_object:
-                        all_sources.append(source_object)
-                    all_raw_documents.extend(confluence_chunks)
-
-                    # Stream found document count
-                    if streaming_service and writer:
-                        writer(
-                            {
-                                "yield_value": streaming_service.format_terminal_info_delta(
-                                    f"📚 Found {len(confluence_chunks)} Confluence pages related to your query"
-                                )
-                            }
-                        )
-                elif connector == "CLICKUP_CONNECTOR":
-                    (
-                        source_object,
-                        clickup_chunks,
-                    ) = await connector_service.search_clickup(
-                        user_query=reformulated_query,
-                        user_id=user_id,
-                        search_space_id=search_space_id,
-                        top_k=top_k,
-                        search_mode=search_mode,
-                    )
-
-                    # Add to sources and raw documents
-                    if source_object:
-                        all_sources.append(source_object)
-                    all_raw_documents.extend(clickup_chunks)
-
-                    # Stream found document count
-                    if streaming_service and writer:
-                        writer(
-                            {
-                                "yield_value": streaming_service.format_terminal_info_delta(
-                                    f"📋 Found {len(clickup_chunks)} ClickUp tasks related to your query"
-                                )
-                            }
-                        )
-
-                elif connector == "LUMA_CONNECTOR":
-                    (
-                        source_object,
-                        luma_chunks,
-                    ) = await connector_service.search_luma(
-                        user_query=reformulated_query,
-                        user_id=user_id,
-                        search_space_id=search_space_id,
-                        top_k=top_k,
-                        search_mode=search_mode,
-                    )
-
-                    # Add to sources and raw documents
-                    if source_object:
-                        all_sources.append(source_object)
-                    all_raw_documents.extend(luma_chunks)
-
-                    # Stream found document count
-                    if streaming_service and writer:
-                        writer(
-                            {
-                                "yield_value": streaming_service.format_terminal_info_delta(
-                                    f"🎯 Found {len(luma_chunks)} Luma events related to your query"
-                                )
-                            }
-                        )
-
-                elif connector == "ELASTICSEARCH_CONNECTOR":
-                    (
-                        source_object,
-                        elasticsearch_chunks,
-                    ) = await connector_service.search_elasticsearch(
-                        user_query=reformulated_query,
-                        user_id=user_id,
-                        search_space_id=search_space_id,
-                        top_k=top_k,
-                        search_mode=search_mode,
-                    )
-
-                    # Add to sources and raw documents
-                    if source_object:
-                        all_sources.append(source_object)
-                    all_raw_documents.extend(elasticsearch_chunks)
-
-                    # Stream found document count
-                    if streaming_service and writer:
-                        writer(
-                            {
-                                "yield_value": streaming_service.format_terminal_info_delta(
-                                    f"🔎 Found {len(elasticsearch_chunks)} Elasticsearch chunks related to your query"
-                                )
-                            }
-                        )
-
-            except Exception as e:
-                logging.error("Error in search_airtable: %s", traceback.format_exc())
-                error_message = f"Error searching connector {connector}: {e!s}"
-                print(error_message)
-
-                # Stream error message
+            print('ccbm620 - connector:', connector)
+            
+            # Loop through all workspaces for cross-workspace search
+            for workspace_id in workspaces_to_search:
+                if len(workspaces_to_search) > 1:
+                    print(f"  📂 Searching in workspace {workspace_id}")
+                    
+                # Stream connector being searched
                 if streaming_service and writer:
+                    connector_emoji = get_connector_emoji(connector)
                     friendly_name = get_connector_friendly_name(connector)
+                    workspace_suffix = f" (Workspace {workspace_id})" if len(workspaces_to_search) > 1 else ""
                     writer(
                         {
-                            "yield_value": streaming_service.format_error(
-                                f"Error searching {friendly_name}: {e!s}"
+                            "yield_value": streaming_service.format_terminal_info_delta(
+                                f"{connector_emoji} Searching {friendly_name}{workspace_suffix} for relevant information..."
                             )
                         }
+                    )
+
+                try:
+                    if connector == "YOUTUBE_VIDEO":
+                        (
+                            source_object,
+                            youtube_chunks,
+                        ) = await connector_service.search_youtube(
+                            user_query=reformulated_query,
+                            user_id=user_id,
+                            search_space_id=workspace_id,  # Use current workspace
+                            top_k=top_k,
+                            search_mode=search_mode,
+                        )
+
+                        # Add to sources and raw documents
+                        if source_object:
+                            all_sources.append(source_object)
+                        all_raw_documents.extend(youtube_chunks)
+
+                        # Stream found document count
+                        if streaming_service and writer:
+                            writer(
+                                {
+                                    "yield_value": streaming_service.format_terminal_info_delta(
+                                        f"📹 Found {len(youtube_chunks)} YouTube chunks related to your query"
+                                    )
+                                }
+                            )
+
+                    elif connector == "EXTENSION":
+                        (
+                            source_object,
+                            extension_chunks,
+                        ) = await connector_service.search_extension(
+                            user_query=reformulated_query,
+                            user_id=user_id,
+                            search_space_id=workspace_id,  # Use current workspace
+                            top_k=top_k,
+                            search_mode=search_mode,
+                        )
+
+                        # Add to sources and raw documents
+                        if source_object:
+                            all_sources.append(source_object)
+                        all_raw_documents.extend(extension_chunks)
+
+                        # Stream found document count
+                        if streaming_service and writer:
+                            writer(
+                                {
+                                    "yield_value": streaming_service.format_terminal_info_delta(
+                                        f"🧩 Found {len(extension_chunks)} Browser Extension chunks related to your query"
+                                    )
+                                }
+                            )
+
+                    elif connector == "CRAWLED_URL":
+                        (
+                            source_object,
+                            crawled_urls_chunks,
+                        ) = await connector_service.search_crawled_urls(
+                        user_query=reformulated_query,
+                        user_id=user_id,
+                        search_space_id=workspace_id,
+                        top_k=top_k,
+                        search_mode=search_mode,
+                        )
+
+                        # Add to sources and raw documents
+                        if source_object:
+                            all_sources.append(source_object)
+                            all_raw_documents.extend(crawled_urls_chunks)
+
+                        # Stream found document count
+                        if streaming_service and writer:
+                            writer(
+                                {
+                                    "yield_value": streaming_service.format_terminal_info_delta(
+                                        f"🌐 Found {len(crawled_urls_chunks)} Web Pages chunks related to your query"
+                                    )
+                                }
+                            )
+
+                    elif connector == "FILE":
+                        source_object, files_chunks = await connector_service.search_files(
+                            user_query=reformulated_query,
+                            user_id=user_id,
+                            search_space_id=workspace_id,
+                            top_k=top_k,
+                            search_mode=search_mode,
+                        )
+
+                        # Add to sources and raw documents
+                        if source_object:
+                            all_sources.append(source_object)
+                        all_raw_documents.extend(files_chunks)
+
+                        # Stream found document count
+                        if streaming_service and writer:
+                            writer(
+                                {
+                                    "yield_value": streaming_service.format_terminal_info_delta(
+                                        f"📄 Found {len(files_chunks)} Files chunks related to your query"
+                                    )
+                                }
+                            )
+
+                    elif connector == "SLACK_CONNECTOR":
+                        source_object, slack_chunks = await connector_service.search_slack(
+                            user_query=reformulated_query,
+                            user_id=user_id,
+                            search_space_id=workspace_id,
+                            top_k=top_k,
+                            search_mode=search_mode,
+                        )
+
+                        # Add to sources and raw documents
+                        if source_object:
+                            all_sources.append(source_object)
+                            all_raw_documents.extend(slack_chunks)
+
+                        # Stream found document count
+                        if streaming_service and writer:
+                            writer(
+                                {
+                                    "yield_value": streaming_service.format_terminal_info_delta(
+                                        f"💬 Found {len(slack_chunks)} Slack messages related to your query"
+                                    )
+                                }
+                            )
+
+                    elif connector == "NOTION_CONNECTOR":
+                        source_object, notion_chunks = await connector_service.search_notion(
+                            user_query=reformulated_query,
+                            user_id=user_id,
+                            search_space_id=workspace_id,
+                            top_k=top_k,
+                        search_mode=search_mode,
+                        )
+
+                        # Add to sources and raw documents
+                        if source_object:
+                            all_sources.append(source_object)
+                            all_raw_documents.extend(notion_chunks)
+
+                            # Stream found document count
+                        if streaming_service and writer:
+                            writer(
+                                {
+                                    "yield_value": streaming_service.format_terminal_info_delta(
+                                        f"📘 Found {len(notion_chunks)} Notion pages/blocks related to your query"
+                                    )
+                                }
+                            )
+
+                    elif connector == "GITHUB_CONNECTOR":
+                        (
+                            source_object,
+                            github_chunks,
+                        ) = await connector_service.search_github(
+                            user_query=reformulated_query,
+                            user_id=user_id,
+                            search_space_id=workspace_id,
+                            top_k=top_k,
+                            search_mode=search_mode,
+                        )
+                        # Add to sources and raw documents
+                        if source_object:
+                            all_sources.append(source_object)
+                            print(f"clmm 627 - Added GitHub source_object to all_sources (total sources: {len(all_sources)})")
+                        all_raw_documents.extend(github_chunks)
+                        print(f"clmm 628 - Extended all_raw_documents with {len(github_chunks)} GitHub chunks (total docs: {len(all_raw_documents)})")
+
+
+                        # Stream found document count
+                        if streaming_service and writer:
+                            writer(
+                                {
+                                    "yield_value": streaming_service.format_terminal_info_delta(
+                                        f"🐙 Found {len(github_chunks)} GitHub files/issues related to your query"
+                                    )
+                                }
+                            )
+
+                    elif connector == "LINEAR_CONNECTOR":
+                        (
+                        source_object,
+                        linear_chunks,
+                        ) = await connector_service.search_linear(
+                        user_query=reformulated_query,
+                        user_id=user_id,
+                        search_space_id=workspace_id,
+                        top_k=top_k,
+                        search_mode=search_mode,
+                        )
+
+                        # Add to sources and raw documents
+                        if source_object:
+                            all_sources.append(source_object)
+                            all_raw_documents.extend(linear_chunks)
+
+                        # Stream found document count
+                        if streaming_service and writer:
+                            writer(
+                                {
+                                    "yield_value": streaming_service.format_terminal_info_delta(
+                                        f"📊 Found {len(linear_chunks)} Linear issues related to your query"
+                                    )
+                                }
+                            )
+
+                    elif connector == "TAVILY_API":
+                        (
+                        source_object,
+                        tavily_chunks,
+                        ) = await connector_service.search_tavily(
+                        user_query=reformulated_query,
+                        user_id=user_id,
+                        search_space_id=workspace_id,
+                        top_k=top_k,
+                        )
+
+                        # Add to sources and raw documents
+                        if source_object:
+                            all_sources.append(source_object)
+                            all_raw_documents.extend(tavily_chunks)
+
+                        # Stream found document count
+                        if streaming_service and writer:
+                            writer(
+                                {
+                                    "yield_value": streaming_service.format_terminal_info_delta(
+                                        f"🔍 Found {len(tavily_chunks)} Web Search results related to your query"
+                                    )
+                                }
+                            )
+
+                    elif connector == "SEARXNG_API":
+                        (
+                        source_object,
+                        searx_chunks,
+                        ) = await connector_service.search_searxng(
+                        user_query=reformulated_query,
+                        user_id=user_id,
+                        search_space_id=workspace_id,
+                        top_k=top_k,
+                        )
+
+                        if source_object:
+                            all_sources.append(source_object)
+                            all_raw_documents.extend(searx_chunks)
+
+                        if streaming_service and writer:
+                            writer(
+                                {
+                                    "yield_value": streaming_service.format_terminal_info_delta(
+                                        f"🌐 Found {len(searx_chunks)} SearxNG results related to your query"
+                                    )
+                                }
+                            )
+
+                    elif connector == "LINKUP_API":
+                        linkup_mode = "standard"
+
+                        (
+                        source_object,
+                        linkup_chunks,
+                        ) = await connector_service.search_linkup(
+                        user_query=reformulated_query,
+                        user_id=user_id,
+                        search_space_id=workspace_id,
+                        mode=linkup_mode,
+                        )
+
+                        # Add to sources and raw documents
+                        if source_object:
+                            all_sources.append(source_object)
+                            all_raw_documents.extend(linkup_chunks)
+
+                        # Stream found document count
+                        if streaming_service and writer:
+                            writer(
+                                {
+                                    "yield_value": streaming_service.format_terminal_info_delta(
+                                        f"🔗 Found {len(linkup_chunks)} Linkup results related to your query"
+                                    )
+                                }
+                            )
+
+                    elif connector == "BAIDU_SEARCH_API":
+                        (
+                        source_object,
+                        baidu_chunks,
+                        ) = await connector_service.search_baidu(
+                        user_query=reformulated_query,
+                        user_id=user_id,
+                        search_space_id=workspace_id,
+                        top_k=top_k,
+                        )
+
+                        # Add to sources and raw documents
+                        if source_object:
+                            all_sources.append(source_object)
+                            all_raw_documents.extend(baidu_chunks)
+
+                        # Stream found document count
+                        if streaming_service and writer:
+                            writer(
+                                {
+                                    "yield_value": streaming_service.format_terminal_info_delta(
+                                        f"🇨🇳 Found {len(baidu_chunks)} Baidu Search results related to your query"
+                                    )
+                                }
+                            )
+
+                    elif connector == "DISCORD_CONNECTOR":
+                        (
+                        source_object,
+                        discord_chunks,
+                        ) = await connector_service.search_discord(
+                        user_query=reformulated_query,
+                        user_id=user_id,
+                        search_space_id=workspace_id,
+                        top_k=top_k,
+                        search_mode=search_mode,
+                        )
+                        # Add to sources and raw documents
+                        if source_object:
+                            all_sources.append(source_object)
+                            all_raw_documents.extend(discord_chunks)
+                        # Stream found document count
+                        if streaming_service and writer:
+                            writer(
+                                {
+                                    "yield_value": streaming_service.format_terminal_info_delta(
+                                        f"🗨️ Found {len(discord_chunks)} Discord messages related to your query"
+                                    )
+                                }
+                            )
+
+                    elif connector == "JIRA_CONNECTOR":
+                        source_object, jira_chunks = await connector_service.search_jira(
+                        user_query=reformulated_query,
+                        user_id=user_id,
+                        search_space_id=workspace_id,
+                        top_k=top_k,
+                        search_mode=search_mode,
+                        )
+
+                        # Add to sources and raw documents
+                        if source_object:
+                            all_sources.append(source_object)
+                            all_raw_documents.extend(jira_chunks)
+
+                        # Stream found document count
+                        if streaming_service and writer:
+                            writer(
+                                {
+                                    "yield_value": streaming_service.format_terminal_info_delta(
+                                        f"🎫 Found {len(jira_chunks)} Jira issues related to your query"
+                                    )
+                                }
+                            )
+                    elif connector == "GOOGLE_CALENDAR_CONNECTOR":
+                        (
+                        source_object,
+                        calendar_chunks,
+                        ) = await connector_service.search_google_calendar(
+                        user_query=reformulated_query,
+                        user_id=user_id,
+                        search_space_id=workspace_id,
+                        top_k=top_k,
+                        search_mode=search_mode,
+                        )
+
+                        # Add to sources and raw documents
+                        if source_object:
+                            all_sources.append(source_object)
+                            all_raw_documents.extend(calendar_chunks)
+
+                        # Stream found document count
+                        if streaming_service and writer:
+                            writer(
+                                {
+                                    "yield_value": streaming_service.format_terminal_info_delta(
+                                        f"📅 Found {len(calendar_chunks)} calendar events related to your query"
+                                    )
+                                }
+                            )
+                    elif connector == "AIRTABLE_CONNECTOR":
+                        (
+                        source_object,
+                        airtable_chunks,
+                        ) = await connector_service.search_airtable(
+                        user_query=reformulated_query,
+                        user_id=user_id,
+                        search_space_id=workspace_id,
+                        top_k=top_k,
+                        search_mode=search_mode,
+                        )
+
+                        # Add to sources and raw documents
+                        if source_object:
+                            all_sources.append(source_object)
+                            all_raw_documents.extend(airtable_chunks)
+
+                        # Stream found document count
+                        if streaming_service and writer:
+                            writer(
+                                {
+                                    "yield_value": streaming_service.format_terminal_info_delta(
+                                        f"🗃️ Found {len(airtable_chunks)} Airtable records related to your query"
+                                    )
+                                }
+                            )
+                    elif connector == "GOOGLE_GMAIL_CONNECTOR":
+                        (
+                        source_object,
+                        gmail_chunks,
+                        ) = await connector_service.search_google_gmail(
+                        user_query=reformulated_query,
+                        user_id=user_id,
+                        search_space_id=workspace_id,
+                        top_k=top_k,
+                        search_mode=search_mode,
+                        )
+
+                        # Add to sources and raw documents
+                        if source_object:
+                            all_sources.append(source_object)
+                            all_raw_documents.extend(gmail_chunks)
+
+                        # Stream found document count
+                        if streaming_service and writer:
+                            writer(
+                                {
+                                    "yield_value": streaming_service.format_terminal_info_delta(
+                                        f"📧 Found {len(gmail_chunks)} Gmail messages related to your query"
+                                    )
+                                }
+                            )
+                    elif connector == "CONFLUENCE_CONNECTOR":
+                        (
+                        source_object,
+                        confluence_chunks,
+                        ) = await connector_service.search_confluence(
+                        user_query=reformulated_query,
+                        user_id=user_id,
+                        search_space_id=workspace_id,
+                        top_k=top_k,
+                        search_mode=search_mode,
+                        )
+
+                        # Add to sources and raw documents
+                        if source_object:
+                            all_sources.append(source_object)
+                            all_raw_documents.extend(confluence_chunks)
+
+                        # Stream found document count
+                        if streaming_service and writer:
+                            writer(
+                                {
+                                    "yield_value": streaming_service.format_terminal_info_delta(
+                                        f"📚 Found {len(confluence_chunks)} Confluence pages related to your query"
+                                    )
+                                }
+                            )
+                    elif connector == "CLICKUP_CONNECTOR":
+                        (
+                        source_object,
+                        clickup_chunks,
+                        ) = await connector_service.search_clickup(
+                        user_query=reformulated_query,
+                        user_id=user_id,
+                        search_space_id=workspace_id,
+                        top_k=top_k,
+                        search_mode=search_mode,
+                        )
+
+                        # Add to sources and raw documents
+                        if source_object:
+                            all_sources.append(source_object)
+                            all_raw_documents.extend(clickup_chunks)
+
+                        # Stream found document count
+                        if streaming_service and writer:
+                            writer(
+                                {
+                                    "yield_value": streaming_service.format_terminal_info_delta(
+                                        f"📋 Found {len(clickup_chunks)} ClickUp tasks related to your query"
+                                    )
+                                }
+                            )
+
+                    elif connector == "LUMA_CONNECTOR":
+                        (
+                        source_object,
+                        luma_chunks,
+                        ) = await connector_service.search_luma(
+                        user_query=reformulated_query,
+                        user_id=user_id,
+                        search_space_id=workspace_id,
+                        top_k=top_k,
+                        search_mode=search_mode,
+                        )
+
+                        # Add to sources and raw documents
+                        if source_object:
+                            all_sources.append(source_object)
+                            all_raw_documents.extend(luma_chunks)
+
+                        # Stream found document count
+                        if streaming_service and writer:
+                            writer(
+                                {
+                                    "yield_value": streaming_service.format_terminal_info_delta(
+                                        f"🎯 Found {len(luma_chunks)} Luma events related to your query"
+                                    )
+                                }
+                            )
+
+                    elif connector == "ELASTICSEARCH_CONNECTOR":
+                        (
+                            source_object,
+                            elasticsearch_chunks,
+                        ) = await connector_service.search_elasticsearch(
+                            user_query=reformulated_query,
+                            user_id=user_id,
+                            search_space_id=workspace_id,
+                            top_k=top_k,
+                            search_mode=search_mode,
+                        )
+
+                        # Add to sources and raw documents
+                        if source_object:
+                            all_sources.append(source_object)
+                        all_raw_documents.extend(elasticsearch_chunks)
+
+                        # Stream found document count
+                        if streaming_service and writer:
+                            writer(
+                                {
+                                    "yield_value": streaming_service.format_terminal_info_delta(
+                                        f"🔎 Found {len(elasticsearch_chunks)} Elasticsearch chunks related to your query"
+                                    )
+                                }
+                            )
+
+                except Exception as e:
+                    logging.error("Error in search_airtable: %s", traceback.format_exc())
+                    error_message = f"Error searching connector {connector}: {e!s}"
+                    print(error_message)
+
+                    # Stream error message
+                    if streaming_service and writer:
+                        friendly_name = get_connector_friendly_name(connector)
+                        writer(
+                            {
+                                "yield_value": streaming_service.format_error(
+                                    f"Error searching {friendly_name}: {e!s}"
+                                )
+                            }
                     )
 
                 # Continue with other connectors on error
@@ -1575,6 +1601,7 @@ async def process_sections(
             connector_service=connector_service,
             search_mode=configuration.search_mode,
             user_selected_sources=user_selected_sources,
+            selected_workspace_ids=state.selected_workspace_ids,  # Pass workspace IDs from state
         )
     except Exception as e:
         error_message = f"Error fetching relevant documents: {e!s}"
@@ -1997,6 +2024,8 @@ async def handle_qna_workflow(
         )
         await connector_service.initialize_counter()
 
+        print('ccbm 617 - configuration.connectors_to_search', configuration.connectors_to_search)
+        
         # Use the reformulated query as a single research question
         research_questions = [reformulated_query, user_query]
 
@@ -2012,6 +2041,7 @@ async def handle_qna_workflow(
             connector_service=connector_service,
             search_mode=configuration.search_mode,
             user_selected_sources=user_selected_sources,
+            selected_workspace_ids=state.selected_workspace_ids,  # Pass workspace IDs from state
         )
     except Exception as e:
         error_message = f"Error fetching relevant documents for QNA: {e!s}"

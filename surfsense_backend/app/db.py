@@ -24,8 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.orm import DeclarativeBase, Mapped, declared_attr, relationship
 
 from app.config import config
-from app.retriver.chunks_hybrid_search import ChucksHybridSearchRetriever
-from app.retriver.documents_hybrid_search import DocumentHybridSearchRetriever
+# Heavy retriever imports moved to function level for lazy loading during migrations
 
 if config.AUTH_TYPE == "GOOGLE":
     from fastapi_users.db import SQLAlchemyBaseOAuthAccountTableUUID
@@ -161,6 +160,11 @@ class Chat(BaseModel, TimestampMixin):
     title = Column(String, nullable=False, index=True)
     initial_connectors = Column(ARRAY(String), nullable=True)
     messages = Column(JSON, nullable=False)
+    
+    # Cross-workspace support
+    document_workspace_map = Column(JSON, nullable=True)
+    connector_workspace_map = Column(JSON, nullable=True)
+    selected_workspace_ids = Column(ARRAY(Integer), nullable=True)
 
     search_space_id = Column(
         Integer, ForeignKey("searchspaces.id", ondelete="CASCADE"), nullable=False
@@ -178,7 +182,7 @@ class Document(BaseModel, TimestampMixin):
     content = Column(Text, nullable=False)
     content_hash = Column(String, nullable=False, index=True, unique=True)
     unique_identifier_hash = Column(String, nullable=True, index=True, unique=True)
-    embedding = Column(Vector(config.embedding_model_instance.dimension))
+    embedding = Column(Vector(config.EMBEDDING_DIMENSION))
 
     search_space_id = Column(
         Integer, ForeignKey("searchspaces.id", ondelete="CASCADE"), nullable=False
@@ -193,7 +197,7 @@ class Chunk(BaseModel, TimestampMixin):
     __tablename__ = "chunks"
 
     content = Column(Text, nullable=False)
-    embedding = Column(Vector(config.embedding_model_instance.dimension))
+    embedding = Column(Vector(config.EMBEDDING_DIMENSION))
 
     document_id = Column(
         Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False
@@ -415,6 +419,88 @@ else:
         )
 
 
+# Study Mode Models
+class StudyMaterial(BaseModel, TimestampMixin):
+    __tablename__ = "study_materials"
+
+    search_space_id = Column(
+        Integer, ForeignKey("searchspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    document_id = Column(
+        Integer, ForeignKey("documents.id", ondelete="SET NULL"), nullable=True
+    )
+
+    material_type = Column(String(20), nullable=False)  # 'FLASHCARD', 'MCQ'
+    question = Column(Text, nullable=False)
+    answer = Column(Text, nullable=True)
+    options = Column(JSON, nullable=True)  # For MCQs
+
+    times_attempted = Column(Integer, default=0)
+    times_correct = Column(Integer, default=0)
+    last_attempted_at = Column(TIMESTAMP, nullable=True)
+
+    search_space = relationship("SearchSpace")
+    document = relationship("Document")
+
+
+# Work Mode Models
+class Task(BaseModel, TimestampMixin):
+    __tablename__ = "tasks"
+
+    search_space_id = Column(
+        Integer, ForeignKey("searchspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id = Column(UUID(as_uuid=True), ForeignKey("user.id", ondelete="CASCADE"), nullable=False)
+
+    title = Column(String(500), nullable=False)
+    description = Column(Text, nullable=True)
+
+    # Source tracking for connector sync
+    source_type = Column(String(50), nullable=True)  # 'LINEAR', 'JIRA', 'SLACK', 'MANUAL'
+    external_id = Column(String(255), nullable=True)
+    external_url = Column(Text, nullable=True)
+    external_metadata = Column(JSON, nullable=True)
+
+    # Status and priority
+    status = Column(String(20), default='UNDONE')  # 'UNDONE', 'DONE'
+    priority = Column(String(20), nullable=True)  # 'LOW', 'MEDIUM', 'HIGH', 'URGENT'
+
+    # Timestamps
+    due_date = Column(TIMESTAMP, nullable=True)
+    updated_at = Column(TIMESTAMP, nullable=True)
+    completed_at = Column(TIMESTAMP, nullable=True)
+
+    # Auto-linked resources
+    linked_chat_ids = Column(ARRAY(Integer), default=[])
+    linked_document_ids = Column(ARRAY(Integer), default=[])
+
+    search_space = relationship("SearchSpace")
+    user = relationship("User")
+
+
+# Notes Models
+class Note(BaseModel, TimestampMixin):
+    __tablename__ = "notes"
+
+    search_space_id = Column(
+        Integer, ForeignKey("searchspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id = Column(UUID(as_uuid=True), ForeignKey("user.id", ondelete="CASCADE"), nullable=False)
+
+    title = Column(String(500), nullable=False)
+    content = Column(Text, nullable=False)
+
+    source_chat_id = Column(
+        Integer, ForeignKey("chats.id", ondelete="SET NULL"), nullable=True
+    )
+
+    updated_at = Column(TIMESTAMP, nullable=True)
+
+    search_space = relationship("SearchSpace")
+    user = relationship("User")
+    source_chat = relationship("Chat")
+
+
 engine = create_async_engine(DATABASE_URL)
 async_session_maker = async_sessionmaker(engine, expire_on_commit=False)
 
@@ -472,10 +558,14 @@ else:
 async def get_chucks_hybrid_search_retriever(
     session: AsyncSession = Depends(get_async_session),
 ):
+    # Lazy import to avoid loading heavy ML models during migrations
+    from app.retriver.chunks_hybrid_search import ChucksHybridSearchRetriever
     return ChucksHybridSearchRetriever(session)
 
 
 async def get_documents_hybrid_search_retriever(
     session: AsyncSession = Depends(get_async_session),
 ):
+    # Lazy import to avoid loading heavy ML models during migrations
+    from app.retriver.documents_hybrid_search import DocumentHybridSearchRetriever
     return DocumentHybridSearchRetriever(session)
