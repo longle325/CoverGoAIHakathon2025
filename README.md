@@ -1,6 +1,6 @@
 <div align="center">
   <img src="strawberries_web/public/logo.png" alt="Stubborn Strawberry Logo" width="120"/>
-  <h1>Stubborn Strawberry</h1>
+  <h1>Strawberries</h1>
   <p>An AI-powered knowledge management system that combines your personal documents with external data sources. Built with FastAPI, Next.js, and PostgreSQL with vector search capabilities.</p>
 </div>
 
