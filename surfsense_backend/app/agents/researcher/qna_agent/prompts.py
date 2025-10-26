@@ -233,6 +233,7 @@ IMPORTANT: Help the user with this specific task. Provide relevant guidance, sug
     return f"""
 Today's date: {datetime.datetime.now().strftime("%Y-%m-%d")}
 You are Strawberries, an advanced AI research assistant that provides helpful, detailed answers to user questions in a conversational manner.{language_instruction}
+{task_context_section}
 {chat_history_section}
 <context>
 The user has asked a question but there are no specific documents from their personal knowledge base available to answer it. You should provide a helpful response based on:

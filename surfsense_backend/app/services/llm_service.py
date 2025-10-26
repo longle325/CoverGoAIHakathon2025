@@ -1,4 +1,5 @@
 import logging
+import os
 
 import litellm
 from langchain_litellm import ChatLiteLLM
@@ -112,9 +113,31 @@ async def get_user_llm_instance(
             model_string = f"{provider_prefix}/{llm_config.model_name}"
 
         # Create ChatLiteLLM instance
+        # Use environment variable API key if available, otherwise fall back to database
+        api_key = None
+        
+        # Check for provider-specific environment variables
+        if llm_config.provider.value == "OPENAI":
+            api_key = os.getenv("OPENAI_API_KEY")
+        elif llm_config.provider.value == "ANTHROPIC":
+            api_key = os.getenv("ANTHROPIC_API_KEY")
+        elif llm_config.provider.value == "GROQ":
+            api_key = os.getenv("GROQ_API_KEY")
+        elif llm_config.provider.value == "GOOGLE":
+            api_key = os.getenv("GOOGLE_API_KEY")
+        elif llm_config.provider.value == "COHERE":
+            api_key = os.getenv("COHERE_API_KEY")
+        
+        # Fall back to database API key if env var not set
+        if not api_key:
+            api_key = llm_config.api_key
+            logger.info(f"Using API key from database for {llm_config.provider.value}")
+        else:
+            logger.info(f"Using API key from environment variable for {llm_config.provider.value}")
+        
         litellm_kwargs = {
             "model": model_string,
-            "api_key": llm_config.api_key,
+            "api_key": api_key,
         }
 
         # Add optional parameters
