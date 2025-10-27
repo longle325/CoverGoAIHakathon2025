@@ -272,7 +272,7 @@ docker-compose up -d
 
 
 # 🎥 Demo
-Check out the live version [here]:(https://drive.google.com/file/d/1slkEbTHBg2O14is6JojxIu4hP9jhAC_B/view?usp=sharing)
+Check out the live version [here](https://drive.google.com/file/d/1slkEbTHBg2O14is6JojxIu4hP9jhAC_B/view?usp=sharing)
 
 ## License
 
