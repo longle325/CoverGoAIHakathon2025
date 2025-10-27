@@ -271,14 +271,10 @@ docker-compose up -d
 ```
 
 
-## Development
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines.
+# 🎥 Demo
+Check out the live version [here]:(https://drive.google.com/file/d/1slkEbTHBg2O14is6JojxIu4hP9jhAC_B/view?usp=sharing)
 
 ## License
 
 See [LICENSE](LICENSE) for details.
 
-## Contributing
-
-Contributions are welcome! Please open an issue or submit a pull request.
