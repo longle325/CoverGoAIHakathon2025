@@ -1,4 +1,4 @@
-# Surf Backend
+# Strawberries Backend
 
 ## Technology Stack Overview
 
